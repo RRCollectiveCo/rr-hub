@@ -60,10 +60,38 @@
         email, options: { emailRedirectTo: location.href.split('#')[0] },
       });
       if (error) { askEmail(sb, 'That didn’t send: ' + error.message); return; }
-      show(`<h2 id="rrh-title">Check your email</h2>
-        <p>We sent a sign-in link to <strong>${esc(email)}</strong>. Open it on this device and you’ll land right back here.</p>
-        <p class="soft">Nothing after a few minutes? Check spam, or <a href="#" class="rrh-again">try again</a>.</p>`);
-      veil.querySelector('.rrh-again').addEventListener('click', ev => { ev.preventDefault(); askEmail(sb); });
+      askCode(sb, email);
+    });
+  }
+
+  // The email has a link AND a code. The link only works in the browser that
+  // asked for it; a Dock web app or a phone home-screen app keeps its own
+  // sign-in, so there the code is typed in instead.
+  function askCode(sb, email, msg) {
+    show(`<h2 id="rrh-title">Check your email</h2>
+      <p>We sent a sign-in email to <strong>${esc(email)}</strong>.</p>
+      <p>Click the link in it, <strong>or</strong> type the code from the email here:</p>
+      ${msg ? `<p class="bad">${esc(msg)}</p>` : ''}
+      <form class="rrh-code" style="display:flex;flex-direction:column;gap:10px">
+        <input type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,12}" required
+          placeholder="Code from the email" aria-label="Sign-in code" style="font-size:1.4rem;letter-spacing:.2em;text-align:center">
+        <button type="submit">Sign in</button>
+      </form>
+      <p class="soft">Nothing after a few minutes? Check spam, or <a href="#" class="rrh-again">send a new email</a>.</p>`);
+    veil.querySelector('.rrh-again').addEventListener('click', ev => { ev.preventDefault(); askEmail(sb); });
+    const form = veil.querySelector('form');
+    form.querySelector('input').focus();
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      const token = form.querySelector('input').value.replace(/\D/g, '');
+      const btn = form.querySelector('button');
+      btn.disabled = true; btn.textContent = 'Signing in…';
+      const { data, error } = await sb.auth.verifyOtp({ email, token, type: 'email' });
+      if (error || !data || !data.session) {
+        askCode(sb, email, 'That code didn’t work. Check it, or send a new email (codes expire after an hour).');
+        return;
+      }
+      start(sb, data.session);
     });
   }
 
