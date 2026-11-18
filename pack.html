@@ -777,6 +777,7 @@ function expand(order){
     if(l.ship === false) continue;
     const p = S.catalog[l.vid];
     if(p && p.type==='noscan') continue;
+    for(const ex of ((S.extras||{})[l.vid]||[])){ const key = 'extra:'+ex.key; add(key, (+ex.qty||1)*l.qty, (p && p.name) || l.title, ex.name); const it = map.get(key); it.extra = true; it.space = +ex.space || 0; }
     if(p && p.type==='kit'){
       const k = S.kits[l.vid];
       if(k && k.components && k.components.length){ for(const c of k.components) add(c.vid, c.qty * l.qty, p.name + (p.variant? ' · '+p.variant:'')); continue; }
@@ -840,7 +841,7 @@ function renderOrder(){
     return `<li class="${done?'done':''}">
       <span class="check">${done?'✓':''}</span>
       <span class="iname"><strong>${esc(name)}</strong>
-        <small>${i.kits.length?`<span class="tag kit">in ${esc(i.kits.join(', '))}</span> `:''}${noCode?'<span class="tag">no barcode yet</span> ':''}${p&&p.code?'<code>'+esc(p.code)+'</code>':''}${i.manual?' · checked by hand':''}</small>
+        <small>${i.kits.length?`<span class="tag kit">in ${esc(i.kits.join(', '))}</span> `:''}${noCode && !i.extra?'<span class="tag">no barcode yet</span> ':''}${i.extra?'<span class="tag">pack in · check by hand</span> ':''}${p&&p.code?'<code>'+esc(p.code)+'</code>':''}${i.manual?' · checked by hand':''}</small>
         ${noCode && !done ? `<div style="margin-top:6px"><button class="btn ghost" data-manual="${idx}">Checked by hand</button></div>`:''}
       </span>
       <span class="qty num">${Math.min(i.got,i.need)}/${i.need}</span>
@@ -866,11 +867,12 @@ async function finish(status, reason){
   const rec = {
     number: c.number, order: c.name, packer: S.packer, status, orderedAt: c.order.createdAt ? Date.parse(c.order.createdAt) : null,
     startedAt: c.startedAt, finishedAt: now, durationSec: Math.round((now-c.startedAt)/1000),
-    units: c.items.reduce((a,i)=>a+i.need,0),
-    manual: c.items.filter(i=>i.manual).reduce((a,i)=>a+i.need,0),
+    units: c.items.filter(i=>!i.extra).reduce((a,i)=>a+i.need,0),
+    manual: c.items.filter(i=>i.manual && !i.extra).reduce((a,i)=>a+i.need,0),
+    extras: c.items.filter(i=>i.extra).map(i=>({ key:i.vid.slice(6), need:i.need, packed:i.got>=i.need })),
     missing: c.items.filter(i=>i.got<i.need).map(i=>({vid:i.vid, short:i.need-i.got})),
     wrong: c.wrong.slice(0,40),
-    lines: c.items.map(i=>({vid:i.vid, need:i.need})),
+    lines: c.items.filter(i=>!i.extra).map(i=>({vid:i.vid, need:i.need})),
     overrideReason: reason || null
   };
   const box = S.boxes.find(b => b.id === c.boxId);
@@ -1507,7 +1509,7 @@ function renderSetup(){
 
 /* ---------- boxes ---------- */
 function boxesSorted(){ return [...S.boxes].sort((a,b)=>(+a.capacity||0)-(+b.capacity||0)); }
-function orderSpace(items){ return items.reduce((a,i)=>{ const p=S.catalog[i.vid]; return a + (p && p.space!=null ? +p.space : 1) * i.need; }, 0); }
+function orderSpace(items){ return items.reduce((a,i)=>{ const p=S.catalog[i.vid]; return a + (i.extra ? (+i.space||0) : (p && p.space!=null ? +p.space : 1)) * i.need; }, 0); }
 function recommendBox(items){
   const bs = boxesSorted(); if(!bs.length) return null;
   const sp = orderSpace(items);
@@ -1572,6 +1574,7 @@ renderQueue(); renderStaff(); signal('idle','Tap an order to start.'); focusScan
   db.collection('packs').orderBy('finishedAt','desc').limit(1000).onSnapshot(s => { S.packs = s.docs.map(d=>d.data()); renderGoal(); renderQueue(); renderOnTime(); renderTeam(); renderSupplies(); }, onErr);
   db.collection('issues').orderBy('at','desc').limit(500).onSnapshot(s => { S.issues = s.docs.map(d=>d.data()); renderTeam(); }, onErr);
   db.collection('shipped').limit(120).onSnapshot(s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.shipped = m; renderOnTime(); }, ()=>{});
+  db.doc('config/extras').onSnapshot(s => { S.extras = (s.exists && s.data().items) || {}; }, ()=>{});
   db.doc('config/holidays').onSnapshot(s => { S.holidays = (s.exists && s.data().list) || []; renderQueue(); renderOnTime(); }, ()=>{});
   db.collection('supplies').onSnapshot(s => { S.supplies = s.docs.map(d=>({ id:d.id, ...d.data() })); renderSupplies(); renderBoxes(); renderPO(); }, onErr);
   db.collection('slips').limit(1000).onSnapshot(s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.slips = m; renderQueue(); }, ()=>{});
