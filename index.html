@@ -985,7 +985,7 @@ function hlpEscalate(q){
 }
 async function hlpAsk(q){
   q = String(q||'').trim(); if(!q || HLP.busy) return;
-  if(!HLP.sample){ hlpAdd('a', '<p>The Helper isn’t available in the new Hub yet. It’s coming soon.</p>'); return; }
+  if(!HLP.sample){ hlpAdd('a', '<p>The Helper couldn’t start. Reload the page and try again.</p>'); return; }
   HLP.busy = true; $('#hlpGo').disabled = true; HLP.lastQ = q;
   $$('#hlpLog .hlpEsc').forEach(x => x.remove());
   hlpAdd('u', esc(q));

@@ -262,12 +262,43 @@
       },
       async callTool(server, tool, args) {
         if (server !== 'Shopify') throw new Error('Unknown server ' + server);
-        const { data, error } = await sb.functions.invoke('hub-shopify', { body: { tool, args } });
-        if (error) throw error;
-        return data;
+        return callHubTools(sb, tool, args);
       },
     };
     return api;
+  }
+
+  // The pages' window to Shopify and Claude: the `hub-tools` edge function.
+  // It answers {error:{code,message}} for problems the page should explain;
+  // those become an Error with .code, like claude.ai's errors did.
+  async function callHubTools(sb, tool, args) {
+    let res;
+    try { res = await sb.functions.invoke('hub-tools', { body: { tool, args } }); }
+    catch (e) { throw Object.assign(new Error('The Hub server didn’t answer'), { code: 'server_unavailable' }); }
+    const { data, error } = res;
+    if (error) {
+      let detail = null;
+      try { detail = error.context && typeof error.context.json === 'function' ? await error.context.json() : null; } catch (e) {}
+      const code = (detail && detail.error && detail.error.code) || 'server_unavailable';
+      throw Object.assign(new Error((detail && detail.error && detail.error.message) || String(error.message || error)), { code });
+    }
+    if (data && data.error) throw Object.assign(new Error(data.error.message || data.error.code), { code: data.error.code });
+    return data;
+  }
+
+  // ---------------------------------------------------------------- sample
+  // claude.ai's built-in Claude for the Hub Helper: sample(turns, {signal,
+  // onText}) -> {text, truncated}. Here it's the `helper` tool of hub-tools
+  // (not streamed: onText gets the whole answer once).
+  function createSample(sb) {
+    return async function sample(turns, opts = {}) {
+      if (opts.signal && opts.signal.aborted) throw Object.assign(new Error('Stopped'), { code: 'cancelled' });
+      const out = await callHubTools(sb, 'helper', { turns });
+      if (opts.signal && opts.signal.aborted) throw Object.assign(new Error('Stopped'), { code: 'cancelled' });
+      const r = { text: String((out && out.text) || ''), truncated: !!(out && out.truncated) };
+      if (typeof opts.onText === 'function') { try { opts.onText({ text: r.text }); } catch (e) {} }
+      return r;
+    };
   }
 
   function createRuntime(sb, staff, opts = {}) {
@@ -277,6 +308,7 @@
       user: createUser(staff, opts.ownerName || 'Hollie'),
       downloads: doc ? createDownloads(doc) : null,
       mcp: createMcp(sb),
+      sample: createSample(sb),
     };
     return {
       async use(name) {
