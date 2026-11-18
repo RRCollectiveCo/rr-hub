@@ -1082,10 +1082,11 @@ function rows(payload){
   const num = new Set(['INTEGER','MONEY','FLOAT','NUMBER','PERCENT','DECIMAL']);
   return a.rows.map(r => Object.fromEntries(a.columns.map((c,i) => [c.name, num.has(c.dataType) ? Number(r[i]) : r[i]])));
 }
-const planDaily = (() => { const out = [];
+const buildPlanDaily = () => { const out = [];
   for(const [w, days, plan, floor, rec] of WEEKS){ const first = days < 7 && w.slice(5,7)==='09' ? 7 - days : 0;
     for(let k=0;k<days;k++){ out.push({ day: shift(w, first + k), week: w, plan: plan/days, floor: floor/days, recovery: rec/days }); } }
-  return out; })();
+  return out; };
+let planDaily = buildPlanDaily();
 
 function compute(){
   const daily = D.daily || [], ly = D.ly || [];
@@ -1210,6 +1211,8 @@ function watch(key, interval){
   if(!ok){ try{ if(await user.canEdit()){ const me = await user.me(); const f = ((me && me.name) || '').trim().split(/\s+/)[0].toLowerCase(); ok = f === 'nathan' || f === 'nate'; } }catch(e){} }
   if(!ok) return;
   try{ const pdb = await claude.use('db'); const ps = await pdb.doc('owners/q4plan').get(); WEEKS = (ps.exists && ps.data().weeks) || []; }catch(e){ WEEKS = []; }
+  planDaily = buildPlanDaily();
+  if(!WEEKS.length){ $('#q4Msg').textContent = 'The Q4 plan didn’t load. Reload the page.'; $('#q4Msg').hidden = false; return; }
   $('#q4').hidden = false;
   MCP = await claude.use('mcp').catch(()=>null);
   if(!MCP){ showMsg({code:'not_granted'}); return; }
