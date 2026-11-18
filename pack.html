@@ -291,6 +291,15 @@ render(); setInterval(render, 10*60*1000);
           </div>
         </div>
       </div>
+      <details class="checkOrder" id="checkOrder" style="margin-top:14px">
+        <summary style="cursor:pointer;font-weight:700">Check an order</summary>
+        <p class="muted" style="margin:6px 0 8px;font-size:.88rem">Is it packed, shipped, or not synced yet? This only looks: it doesn’t start packing.</p>
+        <form class="row" id="coForm" style="gap:8px;flex-wrap:nowrap">
+          <input type="text" id="coNum" inputmode="numeric" placeholder="Order #, e.g. 24566" aria-label="Order number to check" style="flex:1;min-width:0">
+          <button class="btn" type="submit" id="coGo">Check</button>
+        </form>
+        <div id="coOut" role="status" aria-live="polite" style="margin-top:10px"></div>
+      </details>
     </div>
     <aside class="panel">
       <div id="goalBox" class="goalBox" hidden></div>
@@ -1049,6 +1058,39 @@ async function fetchOneOrder(num){
   if(!n) return null;
   const o = toOrder(n); Object.defineProperty(o, 'shopify', { value: { fulfilled: n.displayFulfillmentStatus==='FULFILLED', cancelled: !!n.cancelledAt }, enumerable:false }); return o;
 }
+/* ---------- check an order (read only) ---------- */
+const CO_STATUS = { LABEL_PRINTED:'label bought', LABEL_PURCHASED:'label bought', CONFIRMED:'label bought', IN_TRANSIT:'in transit', OUT_FOR_DELIVERY:'out for delivery', ATTEMPTED_DELIVERY:'delivery attempted', DELIVERED:'delivered', FAILURE:'delivery problem', SUCCESS:'shipped', READY_FOR_PICKUP:'ready for pickup', PICKED_UP:'picked up' };
+async function checkOrder(raw){
+  const num = String(raw||'').replace(/[^0-9]/g,''); const out = $('#coOut');
+  if(!num){ out.innerHTML = '<p class="muted">Type an order number.</p>'; return; }
+  const lines = [];
+  const p1 = fullPack(num) || packFor(num), p2 = packFor(num+'-2'), queued = S.orders.find(o => o.number === num);
+  if(p1) lines.push(p1.status==='cleared' ? `✅ <b>Marked shipped</b> by ${esc(p1.clearedBy||'the team')} · ${fmtTime(p1.finishedAt)}` : `✅ <b>Packed</b> by ${esc(p1.packer||'')} · ${fmtTime(p1.finishedAt)}${isHeld(p1) ? ' (box 1; pre-order items still to pack)' : ''}`);
+  if(p2) lines.push(`✅ <b>Box 2 packed</b> by ${esc(p2.packer||'')} · ${fmtTime(p2.finishedAt)}`);
+  if(!p1 && queued) lines.push('📦 <b>In the Pack queue</b>, not packed yet.');
+  out.innerHTML = lines.map(l => `<p style="margin:4px 0">${l}</p>`).join('') + '<p class="muted" style="margin:4px 0">Checking Shopify…</p>';
+  let sh = null, err = false;
+  if(S.mcp){ try{
+    const res = await S.mcp.callTool('Shopify','graphql_query',{ query:`query{ orders(first:1, query:"name:#${num}"){ nodes{ name createdAt cancelledAt displayFulfillmentStatus fulfillments(first:5){ createdAt displayStatus inTransitAt deliveredAt trackingInfo(first:1){ number company url } } } } }` }, {cache:false});
+    sh = parsePayload(res).data.orders.nodes[0] || null; }catch(e){ err = true; } }
+  if(S.mcp && !err && !sh){ out.innerHTML = `<p style="margin:4px 0">❓ Shopify has no order #${esc(num)}. Check the number.</p>`; return; }
+  if(sh){
+    lines.push(`🛒 Ordered ${fmtTime(Date.parse(sh.createdAt))}`);
+    if(sh.cancelledAt) lines.push(`⛔ <b>Cancelled</b> in Shopify ${fmtTime(Date.parse(sh.cancelledAt))}. Don’t ship it.`);
+    const fs = sh.fulfillments || [];
+    if(!fs.length && !sh.cancelledAt) lines.push('🏷️ <b>No shipping label yet</b> in Shopify.');
+    for(const f of fs){ const st = CO_STATUS[f.displayStatus] || String(f.displayStatus||'shipped').toLowerCase().replace(/_/g,' ');
+      const tr = (f.trackingInfo||[])[0];
+      const when = f.deliveredAt ? ` · delivered ${fmtTime(Date.parse(f.deliveredAt))}` : f.inTransitAt ? ` · in transit since ${fmtTime(Date.parse(f.inTransitAt))}` : '';
+      lines.push(`🚚 <b>${esc(st.charAt(0).toUpperCase()+st.slice(1))}</b> · label ${fmtTime(Date.parse(f.createdAt))}${when}${tr && tr.number ? ` · ${tr.url ? `<a href="${esc(tr.url)}" target="_blank" rel="noopener">${esc((tr.company?tr.company+' ':'')+tr.number)}</a>` : esc((tr.company?tr.company+' ':'')+tr.number)}` : ''}`); }
+    if(!p1 && !queued && !sh.cancelledAt && !fs.length) lines.push('⏳ <b>Not synced to the Hub yet.</b> It arrives with the next hourly sync, or scan the order number to pack it now.');
+    if(!p1 && fs.length) lines.push('⚠️ Has a label in Shopify but was never scanned here, so it isn’t recorded as packed.');
+  } else lines.push(err ? '<span class="muted">Shopify didn’t answer just now. Try again in a minute.</span>' : '<span class="muted">Shopify isn’t connected here, so only the Hub’s record is shown.</span>');
+  if(!lines.some(l => /Packed|shipped|queue|Not synced/.test(l))) lines.push('Not in the Hub’s records.');
+  out.innerHTML = lines.map(l => `<p style="margin:4px 0">${l}</p>`).join('');
+}
+$('#coForm').addEventListener('submit', e => { e.preventDefault(); checkOrder($('#coNum').value); });
+
 async function syncShopify(){
   if(!S.mcp || !S.db) return;
   const btn = $('#syncBtn'); btn.disabled = true; btn.textContent = 'Syncing…';

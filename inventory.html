@@ -219,7 +219,7 @@ form.stack label,.lbl{font-size:.85rem;color:var(--ink-soft);display:flex;flex-d
     </div>
     <div class="panel">
       <div class="row between"><h2>Waiting for release</h2><label class="lbl" style="flex-direction:row;align-items:center;gap:8px;font-size:.88rem">Batch stickers print on<select class="stkFmt" aria-label="Batch sticker format"><option value="roll">2″ × 1″ thermal roll</option><option value="sheet">Avery 5167 sheet</option></select></label></div>
-      <p class="muted" style="margin:0;font-size:.88rem">Finished batches stay in quarantine until Stephanie or Hollie releases them. Once released, they move up to Label &amp; scan; jars go into Shopify stock only when they’re labeled and scanned.</p>
+      <p class="muted" style="margin:0;font-size:.88rem">Finished batches stay in quarantine until Stephanie, Joella or Hollie releases them. Once released, they move up to Label &amp; scan; jars go into Shopify stock only when they’re labeled and scanned.</p>
       <div id="reviewList" style="display:flex;flex-direction:column;gap:10px"></div>
     </div>
     <div class="panel">
@@ -624,7 +624,8 @@ const fmtTime = ms => new Date(ms).toLocaleString([], {month:'short', day:'numer
 const round = n => Math.round(n*1000)/1000;
 let toastT; function toast(m){ const t=$('#toast'); t.textContent=m; t.hidden=false; clearTimeout(toastT); toastT=setTimeout(()=>t.hidden=true,2800); }
 
-const S = { db:null, canEdit:false, downloads:null, tab:'make', mode:'add',
+const BATCH_LEADS = ["joella"];
+const S = { db:null, canEdit:false, canBatch:false, downloads:null, tab:'make', mode:'add',
   catalog:{}, kits:{}, staff:[], settings:{ targetDays:30 }, batches:[], runs:[], counts:[], snap:null, sync:null,
   materials:[], lots:[], recipes:{}, fc:null, q4scen: LS.get('rr-q4-scen') || 'plan', matCat:'All', countMode:false, lotFor:null, bottlesFor:null, typeLot:{}, histOpen:null,
   me: LS.get('rr-me') || '', batchId: LS.get('rr-batch') || '', session:{}, codeIndex:{} };
@@ -1140,7 +1141,7 @@ function renderBatches(){
   const rev = S.batches.filter(b => ['review','hold'].includes(b.status)).sort((a,b)=>(a.finishedAt||0)-(b.finishedAt||0));
   $('#reviewList').innerHTML = rev.length ? rev.map(b => `<div class="record ${b.status}">
       <div class="row between"><div><span class="batchno">${esc(b.lotNo)}</span> <span class="pill ${STAT[b.status][1]}">${STAT[b.status][0]}</span></div>
-        <div class="row"><button class="btn ghost sm" data-stk="${esc(b.id)}">Print stickers</button>${S.canEdit ? `${b.status!=='hold'?`<button class="btn danger sm" data-hold="${esc(b.id)}">Hold</button>`:''}<button class="btn good sm" data-release="${esc(b.id)}">Release</button>` : '<small class="muted">Stephanie or Hollie releases</small>'}</div></div>
+        <div class="row"><button class="btn ghost sm" data-stk="${esc(b.id)}">Print stickers</button>${S.canBatch ? `${b.status!=='hold'?`<button class="btn danger sm" data-hold="${esc(b.id)}">Hold</button>`:''}<button class="btn good sm" data-release="${esc(b.id)}">Release</button>` : '<small class="muted">Stephanie, Joella or Hollie releases</small>'}</div></div>
       ${recordHTML(b)}
       <div class="row" id="hold-${esc(b.id)}" hidden><input type="text" placeholder="Why is it on hold?" aria-label="Hold reason" style="flex:1;min-width:200px"><button class="btn danger sm" data-holdsave="${esc(b.id)}">Put on hold</button></div>
     </div>`).join('') : '<p class="empty">No batches waiting. Finished batches show up here for sign-off.</p>';
@@ -1157,8 +1158,8 @@ function renderBatches(){
       : `<tr><td colspan="7" class="muted">${q?'No batch matches that search.':'No batch numbers issued yet.'}</td></tr>`) + '</tbody>';
   $$('[data-open]').forEach(x => x.addEventListener('click', () => { S.histOpen = S.histOpen===x.dataset.open ? null : x.dataset.open; renderBatches(); }));
   const ob = S.batches.find(b => b.id===S.histOpen);
-  $('#histDetail').innerHTML = ob ? `<div class="record"><div class="row between"><span class="batchno">${esc(ob.lotNo)}</span>${S.canEdit ? '<button class="btn ghost sm" id="histStk">Reprint stickers</button>' : ''}</div>${recordHTML(ob)}</div>` : '';
-  if(ob && S.canEdit && $('#histStk')) $('#histStk').addEventListener('click', () => printStickers(ob, ob.units||0));
+  $('#histDetail').innerHTML = ob ? `<div class="record"><div class="row between"><span class="batchno">${esc(ob.lotNo)}</span>${S.canBatch ? '<button class="btn ghost sm" id="histStk">Reprint stickers</button>' : ''}</div>${recordHTML(ob)}</div>` : '';
+  if(ob && S.canBatch && $('#histStk')) $('#histStk').addEventListener('click', () => printStickers(ob, ob.units||0));
   renderBatchesBadge();
 }
 
@@ -1980,6 +1981,7 @@ renderAll();
   const claude = window.claude; if(!claude || !claude.use){ note('The Hub couldn’t start. Reload the page.'); return; }
   const [db, user, downloads] = await Promise.all(['db','user','downloads'].map(n => claude.use(n).catch(()=>null)));
   S.db = db; S.downloads = downloads; if(user){ try{ S.canEdit = await user.canEdit(); }catch(e){} } if(user){ try{ if(S.canEdit && !(await user.isOwner())){ const MGR = []; let uid = ''; try{ uid = await user.id(); }catch(e){} let f = ''; try{ const me = await user.me(); f = ((me && me.name) || '').trim().split(/\s+/)[0].toLowerCase(); }catch(e){} if(!MGR.includes(uid) && f !== 'stephanie') S.canEdit = false; } }catch(e){ S.canEdit = false; } }
+  if(user){ try{ const me = await user.me(); S.canBatch = S.canEdit || BATCH_LEADS.includes(((me && me.name) || '').trim().split(/\s+/)[0].toLowerCase()); }catch(e){ S.canBatch = S.canEdit; } }
   $('#q4TabBtn').hidden = !S.canEdit; if(!S.canEdit && S.tab==='q4') setTab('make');
   $('#costsTabBtn').hidden = !S.canEdit; if(!S.canEdit && S.tab==='costs') setTab('make');
   $$('.mgrOnly').forEach(x => x.hidden = !S.canEdit);
