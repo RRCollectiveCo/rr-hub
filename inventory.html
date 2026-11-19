@@ -218,7 +218,7 @@ form.stack label,.lbl{font-size:.85rem;color:var(--ink-soft);display:flex;flex-d
       </div>
     </div>
     <div class="panel">
-      <div class="row between"><h2>Waiting for release</h2><label class="lbl" style="flex-direction:row;align-items:center;gap:8px;font-size:.88rem">Batch stickers print on<select class="stkFmt" aria-label="Batch sticker format"><option value="roll">2″ × 1″ thermal roll</option><option value="sheet">Avery 5167 sheet</option></select></label></div>
+      <div class="row between"><h2>Waiting for release</h2><label class="lbl" style="flex-direction:row;align-items:center;gap:8px;font-size:.88rem">Batch stickers print on<select class="stkFmt" aria-label="Batch sticker format"><option value="circle">1.5″ circle</option><option value="roll">2″ × 1″ thermal roll</option><option value="sheet">Avery 5167 sheet</option></select></label></div>
       <p class="muted" style="margin:0;font-size:.88rem">Finished batches stay in quarantine until Stephanie, Joella or Hollie releases them. Once released, they move up to Label &amp; scan; jars go into Shopify stock only when they’re labeled and scanned.</p>
       <div id="reviewList" style="display:flex;flex-direction:column;gap:10px"></div>
     </div>
@@ -646,10 +646,17 @@ function mat(id){ return S.materials.find(m=>m.id===id); }
 function matName(id){ const m = mat(id); return m ? m.name : '(removed material)'; }
 function madeFor(batchId){ return S.runs.filter(r => r.batchId===batchId && r.kind!=='label').reduce((a,r)=>a+(r.qty||0),0); }
 /* ---------- one batch, several sizes (e.g. 2 oz + 4 oz from the same pot) ---------- */
-function sizeSiblings(vid){ const p = S.catalog[vid]; if(!p) return []; return items().filter(([v,q]) => v!==vid && q.name===p.name && !isDisc(v)).map(([v])=>v); }
+// A "Mini" is the small size of the same product (Vanilla Body Butter + Vanilla Body Butter Mini = 8 oz + 2 oz from one pot).
+const isMiniName = n => /\s+mini$/i.test(String(n||'').trim());
+const baseName = n => String(n||'').trim().replace(/\s+mini$/i,'');
+function sizeName(v){ const p = S.catalog[v]; if(!p) return label(v); if(p.variant) return p.variant; if(sizeSiblings(v).length) return isMiniName(p.name) ? (MINI_SIZE[baseName(p.name).toLowerCase()] || '2 oz') : (FULL_SIZE[baseName(p.name).toLowerCase()] || 'Full size'); return label(v); }
+// Full-size jar for products that have no size set in Shopify
+const FULL_SIZE = { 'vanilla body butter':'8 oz', 'vanilla body polish':'8 oz', 'vanilla body oil':'4 oz' };
+const MINI_SIZE = { 'vanilla body oil':'1 oz' };
+function sizeSiblings(vid){ const p = S.catalog[vid]; if(!p) return []; const bn = baseName(p.name).toLowerCase(); return items().filter(([v,q]) => v!==vid && baseName(q.name).toLowerCase()===bn && !isDisc(v)).map(([v])=>v); }
 function sizesOf(b){ return [b.vid, ...((b.also||[]).filter(v => v!==b.vid && S.catalog[v]))]; }
 function fillsOf(b){ if(Array.isArray(b.fillList) && b.fillList.length){ const o = {}; b.fillList.forEach(f => { o[f.vid] = (o[f.vid]||0) + (+f.n||0); }); return o; } return b.fills && typeof b.fills==='object' ? b.fills : null; }
-function batchLabel(b){ const sz = sizesOf(b); if(sz.length < 2) return label(b.vid); const p = S.catalog[b.vid]; return `${p ? p.name : label(b.vid)} · ${sz.map(v => (S.catalog[v]||{}).variant || label(v)).join(' + ')}`; }
+function batchLabel(b){ const sz = sizesOf(b); if(sz.length < 2) return label(b.vid); const p = S.catalog[b.vid]; return `${p ? baseName(p.name) : label(b.vid)} · ${sz.map(v => sizeName(v)).join(' + ')}`; }
 function madeForVid(bid, vid){ return S.runs.filter(r => r.batchId===bid && r.vid===vid && r.kind!=='label').reduce((a,r)=>a+(r.qty||0),0); }
 function liveMadeVid(b, vid){ const cur = S.session[vid]; const doc = S.runs.find(r => r.id === sessionId + '_' + vid); return madeForVid(b.id, vid) + (cur && b.id===S.batchId ? cur.qty - (doc ? (doc.qty||0) : 0) : 0); }
 function liveMade(b){ let n = madeFor(b.id); if(b.id===S.batchId) for(const v of sizesOf(b)){ const cur = S.session[v]; if(!cur) continue; const doc = S.runs.find(r => r.id === sessionId + '_' + v); n += cur.qty - (doc ? (doc.qty||0) : 0); } return n; }
@@ -909,7 +916,7 @@ function renderRecord(){
   box.innerHTML = `
     <div class="row between"><div><span class="eyebrow">Batch record</span><h2>${esc(batchLabel(b))}</h2></div><span class="pill ${STAT[bStatus(b)][1]}">${STAT[bStatus(b)][0]}</span></div>
     <dl class="kv"><dt>Started</dt><dd>${b.startedAt?fmtTime(b.startedAt):'Not yet'}${b.madeBy?' · '+esc(b.madeBy):''}</dd><dt>Units made</dt><dd class="num">${made}${b.planned?` of ${b.planned} planned`:''}</dd></dl>
-    ${sizeSiblings(b.vid).length ? `<div class="sizebox" style="border:1px solid var(--line);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:6px"><span class="eyebrow">Sizes in this batch</span><div class="row" style="gap:14px">${[b.vid, ...sizeSiblings(b.vid)].map(v => `<label class="row" style="gap:6px;font-size:.95rem;color:var(--ink)"><input type="checkbox" data-size="${v}" ${sizesOf(b).includes(v)?'checked':''} ${v===b.vid?'disabled':''} style="width:20px;height:20px"> ${esc((S.catalog[v]||{}).variant || label(v))}</label>`).join('')}</div><small class="muted">Filling more than one size from this pot? Tick each size. You’ll enter how many of each when you finish, and each size’s jars, lids and labels come off.</small></div>` : ''}
+    ${sizeSiblings(b.vid).length ? `<div class="sizebox" style="border:1px solid var(--line);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:6px"><span class="eyebrow">Sizes in this batch</span><div class="row" style="gap:14px">${[b.vid, ...sizeSiblings(b.vid)].map(v => `<label class="row" style="gap:6px;font-size:.95rem;color:var(--ink)"><input type="checkbox" data-size="${v}" ${sizesOf(b).includes(v)?'checked':''} ${v===b.vid?'disabled':''} style="width:20px;height:20px"> ${esc(sizeName(v))}</label>`).join('')}</div><small class="muted">Filling more than one size from this pot (like 8 oz and 2 oz jars)? Tick each size. You’ll enter how many of each when you finish, and each size’s jars, lids and labels come off.</small></div>` : ''}
     ${(() => { const rec = recipeFor(b.vid), f = scaleFor(b); if(b.scale>0){ const by = b.scaleBy ? mat(b.scaleBy.mid) : null; return `<p class="muted" style="margin:0;font-size:.85rem">Amounts are scaled to <strong>${by?`${b.scaleBy.amount} ${esc(by.unit||'')} of ${esc(by.name)}`:'×'+Math.round(f*100)/100}</strong> (×${Math.round(f*100)/100} of the full recipe${rec.yield?`, about ${Math.round(rec.yield*f)} units`:''}). The amounts written in the steps below are for the full recipe; use these amounts instead.</p>`; } return rec.yield && b.planned && sizesOf(b).length < 2 ? `<p class="muted" style="margin:0;font-size:.85rem">Amounts are scaled for <strong>${b.planned} units</strong> (the recipe makes ${rec.yield}${f!==1?`, ×${Math.round(f*100)/100}`:''}).</p>` : (!rec.yield && (rec.ingredients||[]).length ? `<p class="muted" style="margin:0;font-size:.85rem">Amounts are for one full recipe. Set “Units per batch” on the recipe to scale them to the batch size.</p>` : ''); })()}
     ${scaleBoxHTML(b)}
     <div><span class="eyebrow">Ingredient lots</span>
@@ -925,7 +932,7 @@ function renderRecord(){
           ${typing?`<input type="text" class="lot" data-lot="${k}" value="${esc(r.lot||'')}" placeholder="Type lot #" aria-label="Lot for ${esc(matName(r.mid))}" style="width:100%;${lots.length?'margin-top:4px':''}">`:''}
           ${over?`<small style="color:var(--warn)">Only ${round(picked.remaining)} ${unit} left in this bottle. Use “+ Another bottle” for the rest.</small>`:''}</span>
         <input type="number" step="any" min="0" data-amt="${k}" value="${esc(r.amount)}" placeholder="${unit||'amt'}" aria-label="Amount of ${esc(matName(r.mid))} used">
-        <span class="row" style="flex-wrap:nowrap;gap:4px"><small class="muted">${unit}${/^lbs?$/i.test(unit) && r.amount!=='' && r.amount!=null && +r.amount>0 && +r.amount<2 ? ` (${Math.round(+r.amount*16*100)/100} oz)` : ''}</small>${lots.length>1||r.extraBottle?`<button class="btn ghost sm" data-split="${k}" title="Used more than one bottle">+ Another bottle</button>`:''}${r.fromRecipe?'':`<button class="btn ghost sm" data-rmlot="${k}" aria-label="Remove ${esc(matName(r.mid))}">✕</button>`}</span></div>`; }).join('')}
+        <span class="row" style="flex-wrap:nowrap;gap:4px"><small class="muted">${unit}${/^lbs?$/i.test(unit) && r.amount!=='' && r.amount!=null && +r.amount>0 && +r.amount<2 ? ` (${Math.round(+r.amount*16*100)/100} oz)` : ''}</small><button class="btn ghost sm" data-split="${k}" title="Split this ingredient between two bottles or lots">+ Split / another lot</button>${r.fromRecipe?'':`<button class="btn ghost sm" data-rmlot="${k}" aria-label="Remove ${esc(matName(r.mid))}">✕</button>`}</span></div>`; }).join('')}
       </div>
       <div class="row" style="margin-top:8px"><select id="addIng" aria-label="Add ingredient"><option value="">+ Add ingredient</option>${ingMats.filter(m=>!rows.find(r=>r.mid===m.id)).map(m=>`<option value="${esc(m.id)}">${esc(m.name)}</option>`).join('')}<option value="__new">+ New ingredient (not in the system yet)</option></select></div>
       <form id="newIngForm" class="row" style="margin-top:8px;align-items:flex-end" hidden>
@@ -935,7 +942,7 @@ function renderRecord(){
         <label class="lbl" for="niLot">Lot #<input type="text" id="niLot" class="lot" style="width:110px"></label>
         <button class="btn sm" type="submit">Add</button><button class="btn ghost sm" type="button" id="niCancel">Cancel</button></form>
     </div>
-    ${sizesOf(b).some(v => (recipeFor(v).perUnit||[]).length) ? `<div><span class="eyebrow">Packaging (comes off automatically)</span>${sizesOf(b).map(v => `<p style="margin:4px 0 0;font-size:.9rem">${sizesOf(b).length>1?`<strong>${esc((S.catalog[v]||{}).variant||label(v))}:</strong> `:''}${(recipeFor(v).perUnit||[]).map(p=>`${p.qty} × ${esc(matName(p.mid))}`).join(' · ') || 'none listed'} <small class="muted">per unit</small></p>`).join('')}</div>` : `<p class="muted" style="margin:0;font-size:.85rem">No packaging on this product’s recipe yet. Use “Used in” on the Materials tab to add jars, lids and labels.</p>`}
+    ${sizesOf(b).some(v => (recipeFor(v).perUnit||[]).length) ? `<div><span class="eyebrow">Packaging (comes off automatically)</span>${sizesOf(b).map(v => `<p style="margin:4px 0 0;font-size:.9rem">${sizesOf(b).length>1?`<strong>${esc(sizeName(v))}:</strong> `:''}${(recipeFor(v).perUnit||[]).map(p=>`${p.qty} × ${esc(matName(p.mid))}`).join(' · ') || 'none listed'} <small class="muted">per unit</small></p>`).join('')}</div>` : `<p class="muted" style="margin:0;font-size:.85rem">No packaging on this product’s recipe yet. Use “Used in” on the Materials tab to add jars, lids and labels.</p>`}
     ${(() => { const st = String(recipeFor(b.vid).steps||'').split('\n').map(x=>x.trim()).filter(Boolean); if(!st.length) return ''; const done = b.stepsDone || [];
       return `<div><span class="eyebrow">How to make it</span><ol class="steps">${st.map((t,k)=>`<li><label><input type="checkbox" data-step="${k}" ${done.includes(k)?'checked':''}> <span>${esc(t)}</span></label></li>`).join('')}</ol>${recipeFor(b.vid).notes?`<p class="notice" style="margin:6px 0 0;font-size:.85rem">${esc(recipeFor(b.vid).notes)}</p>`:''}</div>`; })()}
     <label class="lbl" for="recNotes">Batch notes<textarea id="recNotes" rows="2" placeholder="Temperatures, observations, deviations">${esc(b.notes||'')}</textarea></label>
@@ -1005,12 +1012,12 @@ function suggestBatchNo(){
 function openFinish(b){
   Object.keys(S.session).forEach(flushRun);
   const rows = recordLots(b); const missing = rows.filter(r => !r.lot);
-  const made = liveMade(b); const rec = recipeFor(b.vid); const sizes = sizesOf(b); const multi = sizes.length > 1;
+  const made = liveMade(b); const rec = recipeFor(b.vid); const sizes = sizeSiblings(b.vid).length ? [...new Set([...sizesOf(b), ...sizeSiblings(b.vid)])] : sizesOf(b); const multi = sizes.length > 1;
   $('#finishBox').innerHTML = `<div class="record review">
     <span class="eyebrow">Finish batch</span>
     ${missing.length ? `<p class="muted" style="margin:0;font-size:.88rem">No lot number for: ${missing.map(r=>esc(matName(r.mid))).join(', ')}. That’s fine if the container doesn’t have one; it’s recorded as “NO LOT”.</p>` : ''}
     <div class="lbl">How many did this batch make? <small class="muted">${made>0?`${made} scanned so far. Change it if the real count is different.`:`Count the filled jars or bottles and type the number${multi?' for each size':''}.`}${!multi && rec.yield?` Recipe estimate: ${rec.yield}.`:''}</small>
-      <div class="row" style="gap:12px;margin-top:4px">${sizes.map(v => { const n = liveMadeVid(b, v); const y = recipeFor(v).yield; return `<label class="lbl" style="font-size:.9rem">${multi ? esc((S.catalog[v]||{}).variant || label(v)) : 'Units'}<input type="number" data-fmade="${v}" ${v===b.vid?'id="fMade"':''} min="0" step="1" inputmode="numeric" value="${n>0?n:''}" placeholder="${!multi && y ? 'about '+y : 'jars'}" style="width:120px"></label>`; }).join('')}</div></div>
+      <div class="row" style="gap:12px;margin-top:4px">${sizes.map(v => { const n = liveMadeVid(b, v); const y = recipeFor(v).yield; return `<label class="lbl" style="font-size:.9rem">${multi ? esc(sizeName(v)) : 'Units'}<input type="number" data-fmade="${v}" ${v===b.vid?'id="fMade"':''} min="0" step="1" inputmode="numeric" value="${n>0?n:''}" placeholder="${!multi && y ? 'about '+y : 'jars'}" style="width:120px"></label>`; }).join('')}</div></div>
     <div class="grid2" style="gap:10px">
       <label class="lbl" for="fNo">Batch number<input type="text" id="fNo" class="lot" value="${esc(suggestBatchNo())}"></label>
       <label class="lbl" for="fBest">Best by (optional)<input type="date" id="fBest"></label>
@@ -1044,10 +1051,12 @@ async function finishBatchInner(b){
   const fills = {}; $$('[data-fmade]').forEach(i => { const q = Math.round(+i.value||0); if(q>0) fills[i.dataset.fmade] = q; });
   const entered = Object.values(fills).reduce((a,q)=>a+q,0);
   if(!(entered>0)){ toast('Enter how many this batch made'); const f = $('[data-fmade]'); if(f) f.focus(); return; }
+  { const also = [...new Set([...(b.also||[]), ...Object.keys(fills)])].filter(v => v!==b.vid);
+    if(also.length !== (b.also||[]).length){ try{ await retryWrite(() => S.db.doc('batches/'+b.id).update({ also })); b.also = also; }catch(e){ toast('Couldn’t save the sizes'+errTxt(e)+'. Tap Issue batch number again.'); return; } } }
   await Promise.all(Object.keys(S.session).map(flushRun));
   const cidOf = v => v===b.vid ? 'count_'+b.id : 'count_'+b.id+'_'+v;
   for(const v of sizesOf(b)){ const cr = S.runs.find(r => r.id===cidOf(v)); const scannedV = liveMadeVid(b, v) - (cr ? (cr.qty||0) : 0);
-    if((fills[v]||0) < scannedV){ toast(`${scannedV} ${(S.catalog[v]||{}).variant||''} were scanned for this batch. Use Remove mode to take extra scans off first.`); return; } }
+    if((fills[v]||0) < scannedV){ toast(`${scannedV} ${sizeName(v)} were scanned for this batch. Use Remove mode to take extra scans off first.`); return; } }
   try{ for(const v of sizesOf(b)){ const cid = cidOf(v); const cr = S.runs.find(r => r.id===cid); const extra = (fills[v]||0) - (liveMadeVid(b, v) - (cr ? (cr.qty||0) : 0));
       if(cr) await retryWrite(() => S.db.doc('runs/'+cid).update({ qty: Math.max(extra, cr.pushedQty||0), updatedAt: Date.now() }));
       else if(extra>0) await retryWrite(() => S.db.doc('runs/'+cid).set({ vid:v, batchId:b.id, qty:extra, pushedQty:0, by:S.me||null, counted:true, startedAt:Date.now(), updatedAt:Date.now(), day:TODAY })); }
@@ -1076,21 +1085,39 @@ async function deductMaterials(b, made, rows, fills){
 function showStickerOffer(b){ S.justFinished = b; renderRecord(); }
 function stickerOfferHTML(b){
   return `<div class="record review"><span class="eyebrow">Batch issued</span><div class="batchno">${esc(b.lotNo)}</div>
-    <p style="margin:0">${esc(batchLabel(b))} · ${fillsOf(b) && Object.keys(fillsOf(b)).length>1 ? Object.entries(fillsOf(b)).map(([v,n])=>`${n} × ${esc((S.catalog[v]||{}).variant||label(v))}`).join(' + ') : b.units+' units'}. It’s waiting for release on the Batches tab.</p>
-    <div class="row" style="align-items:center"><button class="btn" id="stk">Print ${b.units} batch stickers</button><label class="lbl" style="flex-direction:row;align-items:center;gap:8px;font-size:.88rem">Batch stickers print on<select class="stkFmt" aria-label="Batch sticker format"><option value="roll">2″ × 1″ thermal roll</option><option value="sheet">Avery 5167 sheet</option></select></label></div>
-    <p class="muted" style="margin:0;font-size:.85rem">One sticker goes on the bottom of each jar. Roll: one 2″ × 1″ label per page, same roll as the barcode labels. Sheet: Avery 5167 (½″ × 1¾″, 80 per sheet).</p>
+    <p style="margin:0">${esc(batchLabel(b))} · ${fillsOf(b) && Object.keys(fillsOf(b)).length>1 ? Object.entries(fillsOf(b)).map(([v,n])=>`${n} × ${esc(sizeName(v))}`).join(' + ') : b.units+' units'}. It’s waiting for release on the Batches tab.</p>
+    <div class="row" style="align-items:center"><button class="btn" id="stk">Print ${b.units} batch stickers</button><label class="lbl" style="flex-direction:row;align-items:center;gap:8px;font-size:.88rem">Batch stickers print on<select class="stkFmt" aria-label="Batch sticker format"><option value="circle">1.5″ circle</option><option value="roll">2″ × 1″ thermal roll</option><option value="sheet">Avery 5167 sheet</option></select></label></div>
+    <p class="muted" style="margin:0;font-size:.85rem">One sticker goes on the bottom of each jar. Circle: one 1.5″ × 1.5″ round sticker per page. Roll: one 2″ × 1″ label per page, same roll as the barcode labels. Sheet: Avery 5167 (½″ × 1¾″, 80 per sheet).</p>
     <div><button class="btn ghost sm" id="stkDone">Done</button></div></div>`;
 }
 
 /* ---------- batch stickers (Avery 5167: 4 × 20 per letter sheet) ---------- */
-function stkFmt(){ try{ return localStorage.getItem('rr-stkfmt') || 'roll'; }catch(e){ return 'roll'; } }
-function bindStkFmt(){ $$('.stkFmt').forEach(sel => { sel.value = stkFmt(); sel.onchange = () => { try{ localStorage.setItem('rr-stkfmt', sel.value); }catch(e){} $$('.stkFmt').forEach(x => x.value = sel.value); }; }); }
+function stkFmt(){ try{ return localStorage.getItem('rr-stkfmt2') || 'circle'; }catch(e){ return 'circle'; } }
+function bindStkFmt(){ $$('.stkFmt').forEach(sel => { sel.value = stkFmt(); sel.onchange = () => { try{ localStorage.setItem('rr-stkfmt2', sel.value); }catch(e){} $$('.stkFmt').forEach(x => x.value = sel.value); }; }); }
 async function printStickers(b, n){
   if(!window.jspdf){ toast('Sticker tool didn’t load. Reload the page.'); return; }
   if(!S.downloads){ toast('Downloads aren’t available in this view.'); return; }
   const { jsPDF } = window.jspdf;
   const made = b.finishedAt ? new Date(b.finishedAt) : new Date(); const mm = `${String(made.getMonth()+1).padStart(2,'0')}/${String(made.getDate()).padStart(2,'0')}/${String(made.getFullYear()).slice(2)}`;
   const best = b.bestBy ? parseISO(b.bestBy).toLocaleDateString([], {month:'2-digit', year:'2-digit'}) : '';
+  if(stkFmt()==='circle'){
+    const doc = new jsPDF({ unit:'in', format:[1.5,1.5], orientation:'portrait' });
+    const fills = fillsOf(b); const list = fills && Object.keys(fills).length ? Object.entries(fills).flatMap(([v,q]) => Array(+q||0).fill(v)) : Array(n).fill(b.vid);
+    const total = list.length; const C = 0.75;
+    const fit = (txt, start, min, maxW) => { let fs = start; doc.setFontSize(fs); while(doc.getTextWidth(txt) > maxW && fs > min){ fs -= 0.5; doc.setFontSize(fs); } };
+    for(let i=0;i<total;i++){ if(i) doc.addPage([1.5,1.5], 'portrait');
+      const v = list[i] || b.vid; const p = S.catalog[v] || {}; const nm = p.name || label(v);
+      doc.setFont('helvetica','bold'); fit(nm, 7.5, 5, 1.05); doc.text(nm, C, 0.40, { align:'center' });
+      if(p.variant){ doc.setFont('helvetica','normal'); doc.setFontSize(6.5); doc.text(p.variant, C, 0.52, { align:'center' }); }
+      doc.setFont('helvetica','bold'); doc.setFontSize(6); doc.text('BATCH', C, 0.68, { align:'center' });
+      doc.setFont('courier','bold'); fit(String(b.lotNo), 14, 8, 1.25); doc.text(String(b.lotNo), C, 0.86, { align:'center' });
+      doc.setFont('helvetica','normal'); doc.setFontSize(6.5); doc.text(`Made ${mm}`, C, 1.03, { align:'center' });
+      if(best) doc.text(`Best by ${best}`, C, 1.14, { align:'center' });
+    }
+    try{ const r = await S.downloads.save({ filename:`batch-${b.lotNo}-circle-stickers.pdf`, data: doc.output('blob') }); if(r.status==='saved') toast(`${total} circle stickers saved. Print at 100% / actual size on 1.5″ round labels.`); }
+    catch(e){ if(e.code!=='declined') toast('Couldn’t save the PDF.'); }
+    return;
+  }
   if(stkFmt()==='roll'){
     const doc = new jsPDF({ unit:'in', format:[2,1], orientation:'landscape' });
     const fills = fillsOf(b); const list = fills && Object.keys(fills).length ? Object.entries(fills).flatMap(([v,q]) => Array(+q||0).fill(v)) : Array(n).fill(b.vid);
@@ -1125,7 +1152,7 @@ function recordHTML(b){
   const qc = b.qc || {};
   return `<dl class="kv">
     <dt>Batch #</dt><dd class="lot"><strong>${esc(b.lotNo||'—')}</strong></dd>
-    <dt>Product</dt><dd>${esc(batchLabel(b))}${fillsOf(b) && Object.keys(fillsOf(b)).length>1 ? `<br><small class="muted">${Object.entries(fillsOf(b)).map(([v,n])=>`${n} × ${esc((S.catalog[v]||{}).variant||label(v))}`).join(' · ')}</small>` : ''}</dd>
+    <dt>Product</dt><dd>${esc(batchLabel(b))}${fillsOf(b) && Object.keys(fillsOf(b)).length>1 ? `<br><small class="muted">${Object.entries(fillsOf(b)).map(([v,n])=>`${n} × ${esc(sizeName(v))}`).join(' · ')}</small>` : ''}</dd>
     <dt>Units</dt><dd class="num">${b.units ?? madeFor(b.id)}</dd>
     <dt>Made</dt><dd>${b.startedAt?fmtTime(b.startedAt):''}${b.madeBy?' · '+esc(b.madeBy):''}</dd>
     <dt>Finished</dt><dd>${b.finishedAt?fmtTime(b.finishedAt):''}${b.finishedBy?' · '+esc(b.finishedBy):''}</dd>
@@ -1137,17 +1164,40 @@ function recordHTML(b){
     ${b.holdReason?`<dt>Hold reason</dt><dd>${esc(b.holdReason)}</dd>`:''}
   </dl>`;
 }
+function fixFills(b){ const f = fillsOf(b); return f && Object.keys(f).length ? { ...f } : { [b.vid]: +b.units||0 }; }
+async function fixCount(b, box){
+  if(!S.me){ toast('Choose your name first'); return; }
+  const old = fixFills(b); const nw = {};
+  box.querySelectorAll('[data-fixn]').forEach(i => { nw[i.dataset.fixn] = Math.max(0, Math.round(+i.value||0)); });
+  const total = Object.values(nw).reduce((a,q)=>a+q,0); if(!(total>0)){ toast('Enter how many this batch made'); return; }
+  if(Object.keys(nw).every(v => nw[v] === (+old[v]||0))){ box.hidden = true; return; }
+  try{
+    for(const [v,n] of Object.entries(nw)){ const d = n - (+old[v]||0); if(!d) continue;
+      const cid = v===b.vid ? 'count_'+b.id : 'count_'+b.id+'_'+v; const cr = S.runs.find(r=>r.id===cid);
+      if(cr) await retryWrite(() => S.db.doc('runs/'+cid).update({ qty: Math.max(+cr.pushedQty||0, (+cr.qty||0) + d), updatedAt:Date.now() }));
+      else if(d>0) await retryWrite(() => S.db.doc('runs/'+cid).set({ vid:v, batchId:b.id, qty:d, pushedQty:0, by:S.me, counted:true, startedAt:Date.now(), updatedAt:Date.now(), day:TODAY }));
+      for(const p of (recipeFor(v).perUnit||[])){ const m = mat(p.mid); if(m) await retryWrite(() => S.db.doc('materials/'+p.mid).update({ onHand: round(Math.max(0, (+m.onHand||0) - p.qty*d)), updatedAt:Date.now(), updatedBy:S.me })); } }
+    const note = `${fmtDay(TODAY)}: count fixed by ${S.me} (${Object.keys(nw).map(v => (+old[v]||0)+' → '+nw[v]+(Object.keys(nw).length>1?' '+sizeName(v):'')).join(', ')})`;
+    await retryWrite(() => S.db.doc('batches/'+b.id).update({ units: total, fillList: Object.entries(nw).map(([vid,n])=>({ vid, n })), notes: (b.notes ? b.notes + ' · ' : '') + note }));
+    box.hidden = true; toast('Count saved');
+  }catch(e){ toast('Couldn’t save the count'+errTxt(e)); }
+}
 function renderBatches(){
   const rev = S.batches.filter(b => ['review','hold'].includes(b.status)).sort((a,b)=>(a.finishedAt||0)-(b.finishedAt||0));
   $('#reviewList').innerHTML = rev.length ? rev.map(b => `<div class="record ${b.status}">
       <div class="row between"><div><span class="batchno">${esc(b.lotNo)}</span> <span class="pill ${STAT[b.status][1]}">${STAT[b.status][0]}</span></div>
-        <div class="row"><button class="btn ghost sm" data-stk="${esc(b.id)}">Print stickers</button>${S.canBatch ? `${b.status!=='hold'?`<button class="btn danger sm" data-hold="${esc(b.id)}">Hold</button>`:''}<button class="btn good sm" data-release="${esc(b.id)}">Release</button>` : '<small class="muted">Stephanie, Joella or Hollie releases</small>'}</div></div>
+        <div class="row"><button class="btn ghost sm" data-fix="${esc(b.id)}">Fix count</button><button class="btn ghost sm" data-stk="${esc(b.id)}">Print stickers</button>${S.canBatch ? `${b.status!=='hold'?`<button class="btn danger sm" data-hold="${esc(b.id)}">Hold</button>`:''}<button class="btn good sm" data-release="${esc(b.id)}">Release</button>` : '<small class="muted">Stephanie, Joella or Hollie releases</small>'}</div></div>
+      <div class="row" id="fix-${esc(b.id)}" hidden style="align-items:flex-end;border:2px solid var(--tan);border-radius:10px;padding:10px"></div>
       ${recordHTML(b)}
       <div class="row" id="hold-${esc(b.id)}" hidden><input type="text" placeholder="Why is it on hold?" aria-label="Hold reason" style="flex:1;min-width:200px"><button class="btn danger sm" data-holdsave="${esc(b.id)}">Put on hold</button></div>
     </div>`).join('') : '<p class="empty">No batches waiting. Finished batches show up here for sign-off.</p>';
   renderLabel();
   $$('[data-release]').forEach(x => x.addEventListener('click', async () => { if(!S.me){ toast('Choose your name first'); return; } try{ await S.db.doc('batches/'+x.dataset.release).update({ status:'released', releasedAt:Date.now(), releasedBy:S.me, labelGate:true }); S.labelBatch = x.dataset.release; toast('Released. Label the jars and scan them in under Label & scan.'); }catch(e){ toast('Couldn’t release.'); } }));
   $$('[data-hold]').forEach(x => x.addEventListener('click', () => { $('#hold-'+x.dataset.hold).hidden = false; }));
+  $$('[data-fix]').forEach(x => x.addEventListener('click', () => { const b = S.batches.find(y=>y.id===x.dataset.fix); if(!b) return; const box = $('#fix-'+b.id); if(!box.hidden){ box.hidden = true; return; }
+    const f = fixFills(b);
+    box.innerHTML = `<strong style="width:100%;font-size:.92rem">How many did this batch really make?</strong>` + Object.entries(f).map(([v,n]) => `<label class="lbl" style="font-size:.9rem">${esc(sizeName(v))}<input type="number" min="0" step="1" inputmode="numeric" data-fixn="${v}" value="${n}" style="width:110px"></label>`).join('') + `<button class="btn sm" type="button" data-fixsave="1">Save count</button><small class="muted" style="width:100%">Jars, bottles and labels for the difference come off (or go back on) automatically. The change is noted on the batch record.</small>`;
+    box.hidden = false; box.querySelector('[data-fixsave]').addEventListener('click', () => fixCount(b, box)); }));
   $$('[data-holdsave]').forEach(x => x.addEventListener('click', async () => { const r = x.previousElementSibling.value.trim(); if(!r){ toast('Add a reason'); return; } try{ await S.db.doc('batches/'+x.dataset.holdsave).update({ status:'hold', holdReason:r, heldBy:S.me||null, heldAt:Date.now() }); }catch(e){ toast('Couldn’t save.'); } }));
   bindStkFmt();
   $$('[data-stk]').forEach(x => x.addEventListener('click', () => { const b = S.batches.find(y=>y.id===x.dataset.stk); if(b) printStickers(b, b.units||madeFor(b.id)); }));
@@ -1180,7 +1230,7 @@ function renderLabel(){
     return `<div class="record" style="${on?'border-color:var(--ink)':''}">
       <div class="row between"><div><span class="batchno">${esc(b.lotNo||'')}</span> <strong>${esc(batchLabel(b))}</strong></div>
         <div class="row">${on?'<span class="pill good">Scanning this batch</span>':`<button class="btn sm" data-lpick="${esc(b.id)}">Scan this batch</button>`}<button class="btn ghost sm" data-ldone="${esc(b.id)}">Done labeling</button></div></div>
-      ${sz.map(v => { const m = madeVid(b,v), l = labeledVid(b.id,v); return `<div class="row" style="gap:12px"><span style="min-width:130px">${esc(sz.length>1 ? ((S.catalog[v]||{}).variant || label(v)) : 'Jars')}</span><span class="num"><strong>${l}</strong> of ${m} labeled</span><span class="meter" style="flex:1;max-width:240px"><span style="width:${m?Math.min(100,Math.round(l/m*100)):0}%"></span></span>${l>m?'<span class="pill warn">More than were made</span>':''}</div>`; }).join('')}
+      ${sz.map(v => { const m = madeVid(b,v), l = labeledVid(b.id,v); return `<div class="row" style="gap:12px"><span style="min-width:130px">${esc(sz.length>1 ? (sizeName(v)) : 'Jars')}</span><span class="num"><strong>${l}</strong> of ${m} labeled</span><span class="meter" style="flex:1;max-width:240px"><span style="width:${m?Math.min(100,Math.round(l/m*100)):0}%"></span></span>${l>m?'<span class="pill warn">More than were made</span>':''}</div>`; }).join('')}
       <small class="muted">Released ${b.releasedAt?fmtTime(b.releasedAt):''}${b.releasedBy?' by '+esc(b.releasedBy):''}${lab<tot?` · ${tot-lab} still to label`:''}</small>
       <div class="row" id="ldone-${esc(b.id)}" hidden><span class="notice" style="flex:1;margin:0">${lab<tot?`${tot-lab} jar${tot-lab===1?'':'s'} weren’t scanned. They won’t go into stock.`:'All jars scanned.'}</span><button class="btn good sm" data-ldonesure="${esc(b.id)}">Yes, finish this batch</button></div>
     </div>`; }).join('') : '<p class="empty">No released batches waiting for labels.</p>';
